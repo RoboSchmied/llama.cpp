@@ -42,6 +42,12 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Prometheus
+        id: install_prometheus
+        run: |
+          wget --quiet https://github.com/prometheus/prometheus/releases/download/v2.51.0/prometheus-2.51.0.linux-amd64.tar.gz
+          tar xzf prometheus*.tar.gz --strip-components=1
+
       - name: Build
         id: cmake_build
         run: |
@@ -78,7 +84,12 @@ jobs:
         run: |
           set -eux
 
-          build/bin/server \
+          ./prometheus --config.file=examples/server/bench/prometheus.yml &
+          while ! nc -z localhost 9090; do   
+            sleep 0.1
+          done
+
+          ./build/bin/server \
               --host 0.0.0.0 \
               --port 8080 \
               --hf-repo ggml-org/models	 \
