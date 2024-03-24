@@ -1,0 +1,103 @@
+# Benchmark
+name: Benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      gpu-series:
+        description: 'Azure GPU series to run with'
+        required: true
+        type: choice
+        options:
+          - Standard_NC4as_T4_v3
+          - Standard_NC64as_T4_v3
+          - Standard_NC24ads_A100_v4
+          - Standard_NC48ads_A100_v4
+          - Standard_ND96asr_A100_v4
+          - Standard_NC40ads_H100_v5
+          - Standard_NC80adis_H100_v5
+  push:
+    branches:
+      - master
+      - hp/server/bench/workflow # FIXME remove
+    paths: ['.github/workflows/server.yml', '**/CMakeLists.txt', '**/Makefile', '**/*.h', '**/*.hpp', '**/*.c', '**/*.cpp', '**/*.cu', '**/*.swift', '**/*.m', 'examples/server/bench/**.*']
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths: ['.github/workflows/server.yml', '**/CMakeLists.txt', '**/Makefile', '**/*.h', '**/*.hpp', '**/*.c', '**/*.cpp', '**/*.cu', '**/*.swift', '**/*.m', 'examples/server/bench/**.*']
+  schedule:
+    -  cron: '04 2 * * *'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bench-server-baseline:
+    runs-on: Standard_NC4as_T4_v3
+    if: ${{ github.event.schedule || github.event.inputs.gpu-series == 'Standard_NC4as_T4_v3' || github.event.pull_request || github.event.push.ref == 'refs/heads/master' }}
+    steps:
+      - name: Clone
+        id: checkout
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Build
+        id: cmake_build
+        run: |
+          set -eux
+          mkdir build
+          cd build
+          cmake .. \
+              -DLLAMA_NATIVE=OFF \
+              -DLLAMA_BUILD_SERVER=ON \
+              -DLLAMA_CURL=ON \
+              -DLLAMA_CUBLAS=ON \
+              -DCUDAToolkit_ROOT=/usr/local/cuda \
+              -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
+              -DCMAKE_CUDA_ARCHITECTURES=native \
+              -DLLAMA_FATAL_WARNINGS=OFF \
+              -DLLAMA_ALL_WARNINGS=OFF \
+              -DCMAKE_BUILD_TYPE=Release;
+          cmake --build . --config Release -j $(nproc) --target server
+
+      - name: Install k6
+        id: k6_installation
+        run: |
+          wget --quiet https://github.com/grafana/k6/releases/download/v0.49.0/k6-v0.49.0-linux-amd64.tar.gz
+          tar xzf k6*.tar.gz --strip-components=1
+
+      - name: Download the dataset
+        id: download_dataset
+        run: |
+          cd examples/server/bench
+          wget --quiet https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/resolve/main/ShareGPT_V3_unfiltered_cleaned_split.json
+
+      - name: Server bench
+        id: server_bench
+        run: |
+          build/bin/server \
+              --host 0.0.0.0 \
+              --port 8080 \
+              --hf-repo ggml-org/models	 \
+              --hf-file phi-2/ggml-model-q4_0.gguf \
+              --model ggml-model.gguf \
+              --metrics \
+              --parallel 8 \
+              --batch-size 2048 \
+              --ubatch-size	256 \
+              --n-predict 512 \
+              --ctx-size 16384 \
+              --log-format text \
+              -ngl 33 &
+
+          while ! nc -z localhost 8080; do   
+            sleep 0.1
+          done
+
+          while [[ "$(curl -s -o /dev/null -w ''%{http_code}'' localhost:8080)" != "200" ]]; do
+            sleep 0.5;
+          done
+
+          cd examples/server/bench
+          ../../../k6 run script.js --duration 10m --iterations 500 --vus 8
