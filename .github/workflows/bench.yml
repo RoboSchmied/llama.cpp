@@ -55,7 +55,7 @@ jobs:
               -DLLAMA_CUBLAS=ON \
               -DCUDAToolkit_ROOT=/usr/local/cuda \
               -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
-              -DCMAKE_CUDA_ARCHITECTURES=native \
+              -DCMAKE_CUDA_ARCHITECTURES=75 \
               -DLLAMA_FATAL_WARNINGS=OFF \
               -DLLAMA_ALL_WARNINGS=OFF \
               -DCMAKE_BUILD_TYPE=Release;
@@ -76,6 +76,8 @@ jobs:
       - name: Server bench
         id: server_bench
         run: |
+          set -eux
+
           build/bin/server \
               --host 0.0.0.0 \
               --port 8080 \
@@ -86,7 +88,7 @@ jobs:
               --parallel 8 \
               --batch-size 2048 \
               --ubatch-size	256 \
-              --n-predict 512 \
+              --n-predict 4096 \
               --ctx-size 16384 \
               --log-format text \
               -ngl 33 &
@@ -100,4 +102,8 @@ jobs:
           done
 
           cd examples/server/bench
-          ../../../k6 run script.js --duration 10m --iterations 500 --vus 8
+          SERVER_BENCH_N_PROMPTS=1000 \
+          SERVER_BENCH_MAX_PROMPT_TOKENS=1024 \
+          SERVER_BENCH_MAX_CONTEXT=4096 \
+          SERVER_BENCH_MAX_TOKENS=4096 \
+              ../../../k6 run script.js --duration 10m --iterations 1000 --vus 8
