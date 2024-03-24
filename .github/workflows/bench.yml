@@ -101,6 +101,8 @@ jobs:
               --ubatch-size	256 \
               --n-predict 4096 \
               --ctx-size 16384 \
+              --defrag-thold 0.8 \
+              --log-format text \
               --log-format text \
               -ngl 33 &
 
